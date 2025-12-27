@@ -1,14 +1,25 @@
+import os
 from flask import Flask, render_template, request, redirect, url_for
-from flask_login import LoginManager, UserMixin, login_user, login_required, logout_user
+from flask_login import (
+    LoginManager,
+    UserMixin,
+    login_user,
+    login_required,
+    logout_user,
+    current_user
+)
 from peewee import Model, CharField, SqliteDatabase
+from werkzeug.security import generate_password_hash, check_password_hash
 
+# -------------------- Flask App --------------------
 app = Flask(__name__)
 app.secret_key = "secret_key_123"
 
-# دیتابیس
-db = SqliteDatabase("database.db")
+# -------------------- Database --------------------
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+db = SqliteDatabase(os.path.join(BASE_DIR, "database.db"))
 
-# مدل کاربر
+# -------------------- User Model --------------------
 class User(Model, UserMixin):
     username = CharField(unique=True)
     password = CharField()
@@ -16,74 +27,66 @@ class User(Model, UserMixin):
     class Meta:
         database = db
 
-# ساخت جدول
-db.connect()
-db.create_tables([User])
+db.connect(reuse_if_open=True)
+db.create_tables([User], safe=True)
 
-# Flask-Login
+# -------------------- Login Manager --------------------
 login_manager = LoginManager()
 login_manager.init_app(app)
 login_manager.login_view = "login"
 
 @login_manager.user_loader
 def load_user(user_id):
-    try:
-        return User.get_by_id(user_id)
-    except:
-        return None
+    return User.get_by_id(user_id)
 
-# صفحه اصلی
+# -------------------- Home Page --------------------
 @app.route("/")
+@login_required
 def home():
-    return "Flask + Peewee OK ✅"
+    return render_template("home.html", user=current_user)
 
-# ثبت نام
+# -------------------- Register --------------------
 @app.route("/register", methods=["GET", "POST"])
 def register():
     if request.method == "POST":
         username = request.form["username"]
         password = request.form["password"]
 
-        if User.select().where(User.username == username).exists():
-            return "این نام کاربری قبلاً ثبت شده"
+        hashed_password = generate_password_hash(password)
 
-        User.create(username=username, password=password)
+        User.create(
+            username=username,
+            password=hashed_password
+        )
+
         return redirect(url_for("login"))
 
     return render_template("register.html")
 
-# لاگین
+# -------------------- Login --------------------
 @app.route("/login", methods=["GET", "POST"])
 def login():
     if request.method == "POST":
         username = request.form["username"]
         password = request.form["password"]
-        remember = True if request.form.get("remember") else False
 
         try:
             user = User.get(User.username == username)
-            if user.password == password:
-                login_user(user, remember=remember)
-                return redirect(url_for("dashboard"))
-            else:
-                return "رمز عبور اشتباه است"
-        except:
-            return "کاربر وجود ندارد"
+            if check_password_hash(user.password, password):
+                login_user(user)
+                return redirect(url_for("home"))
+        except User.DoesNotExist:
+            pass
 
     return render_template("login.html")
 
-# داشبورد
-@app.route("/dashboard")
-@login_required
-def dashboard():
-    return "خوش آمدی! لاگین شدی 🎉"
-
-# خروج
+# -------------------- Logout --------------------
 @app.route("/logout")
 @login_required
 def logout():
     logout_user()
     return redirect(url_for("login"))
 
+# -------------------- Run App --------------------
 if __name__ == "__main__":
     app.run(debug=True)
